@@ -109,7 +109,7 @@ class ModelBase(nn.Module):
         '''
         Pure inference, generate the network output.
         '''
-        feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
         feature = self.encoder(feature)
         correction = self.decoder(feature)
         
@@ -127,7 +127,7 @@ class ModelBase(nn.Module):
  
     ## For reference
     def forward(self, data, init_state):
-        feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
         feature = self.encoder(feature)
         correction = self.decoder(feature)
 

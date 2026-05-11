@@ -57,9 +57,11 @@ def padding_collate(data, pad_len = 1, use_gravity = True):
 
     pad_acc = init_state['rot'].Inv() * iden_acc_vector
     pad_gyro = torch.zeros(B, pad_len, 3, dtype=input_data['dt'].dtype)
+    pad_rot = init_state['rot'].repeat(1, pad_len, 1)
 
     input_data["acc"] = torch.cat([pad_acc, input_data['acc']], dim =1)
     input_data["gyro"] = torch.cat([pad_gyro, input_data['gyro']], dim =1)
+    input_data["rot"] = torch.cat([pad_rot, input_data['rot']], dim =1)
     
     return  input_data, init_state, label
 

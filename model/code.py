@@ -29,7 +29,7 @@ class CodeNet(ModelBase):
         self.inter_head = np.floor(self.interval/2.).astype(int)
         self.inter_tail = self.interval - self.inter_head
 
-        self.cnn = CNNEncoder(c_list=[6, 32, 64], k_list=[7, 7], s_list=[3, 3])# (N,F/8,64)
+        self.cnn = CNNEncoder(c_list=[10, 32, 64], k_list=[7, 7], s_list=[3, 3])# (N,F/8,64) - input: acc(3) + gyro(3) + rot(4)
 
         self.gru1 = nn.GRU(input_size = 64, hidden_size = 128, num_layers = 1, batch_first = True)
         self.gru2 = nn.GRU(input_size = 128, hidden_size = 256, num_layers = 1, batch_first = True)
@@ -83,7 +83,7 @@ class CodeNet(ModelBase):
 
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
-        feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
         feature = self.encoder(feature)[:,1:,:]
         correction = self.decoder(feature)
         zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
@@ -108,6 +108,7 @@ class CodeNet(ModelBase):
 
         data['corrected_acc'] = data['acc'][:,self.interval:,:] + inference_state['correction_acc']
         data['corrected_gyro'] = data['gyro'][:,self.interval:,:] + inference_state['correction_gyro']
+        data['rot'] = data['rot'][:,self.interval:,:]
 
         out_state = self.integrate(init_state = init_state, data = data, cov_state = inference_state['cov_state'])
 
@@ -121,7 +122,7 @@ class CodePoseNet(CodeNet):
 
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
-        feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
         feature = self.encoder(feature)[:,1:,:]
         correction = self.decoder(feature)
         zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
