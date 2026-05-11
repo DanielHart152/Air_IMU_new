@@ -19,6 +19,7 @@ import pypose as pp
 
 import torch
 import torch.utils.data as Data
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 
 from pyhocon import ConfigFactory
 from datasets import SeqInfDataset, SeqDataset, imu_seq_collate
@@ -61,21 +62,37 @@ if __name__ == '__main__':
             print("data_conf.dataroot", data_conf.data_root)
             print("data_name", data_name)
             print("data_conf.name", data_conf.name)
+            
+            # Sanitize data_name for use as filename prefix
+            safe_data_name = data_name.replace('/', '_').replace('\\', '_')
 
             dataset = SeqDataset(data_conf.data_root, data_name, args.device, name = data_conf.name, duration=args.seqlen, step_size=args.seqlen, drop_last=False, conf = dataset_conf)
             loader = Data.DataLoader(dataset=dataset, batch_size=1, collate_fn=imu_seq_collate, shuffle=False, drop_last=False)
             
             init = dataset.get_init_value()
             gravity = dataset.get_gravity()
-            integrator_outstate = pp.module.IMUPreintegrator(
-                init['pos'], init['rot'], init['vel'],gravity=gravity,
-                reset=False
-            ).to(args.device).double()
             
-            integrator_reset = pp.module.IMUPreintegrator(
-                init['pos'], init['rot'], init['vel'],gravity = gravity,
-                reset=True
-            ).to(args.device).double()
+            # Use IMUIntegratorWithGTRot when usegtrot is True
+            if args.usegtrot:
+                integrator_outstate = pp.module.IMUIntegratorWithGTRot(
+                    init['pos'], init['rot'], init['vel'], gravity=gravity,
+                    reset=False
+                ).to(args.device).double()
+                
+                integrator_reset = pp.module.IMUIntegratorWithGTRot(
+                    init['pos'], init['rot'], init['vel'], gravity=gravity,
+                    reset=True
+                ).to(args.device).double()
+            else:
+                integrator_outstate = pp.module.IMUPreintegrator(
+                    init['pos'], init['rot'], init['vel'], gravity=gravity,
+                    reset=False
+                ).to(args.device).double()
+                
+                integrator_reset = pp.module.IMUPreintegrator(
+                    init['pos'], init['rot'], init['vel'], gravity=gravity,
+                    reset=True
+                ).to(args.device).double()
             
             outstate = integrate(
                 integrator_outstate, loader, init, 
@@ -95,10 +112,17 @@ if __name__ == '__main__':
                                             collate_fn=imu_seq_collate, 
                                             shuffle=False, drop_last=True)
 
-                integrator_infstate = pp.module.IMUPreintegrator(
-                    init['pos'], init['rot'], init['vel'], gravity = gravity,
-                    reset=False
-                ).to(args.device).double()
+                # Use IMUIntegratorWithGTRot when usegtrot is True for inference state
+                if args.usegtrot:
+                    integrator_infstate = pp.module.IMUIntegratorWithGTRot(
+                        init['pos'], init['rot'], init['vel'], gravity=gravity,
+                        reset=False
+                    ).to(args.device).double()
+                else:
+                    integrator_infstate = pp.module.IMUPreintegrator(
+                        init['pos'], init['rot'], init['vel'], gravity=gravity,
+                        reset=False
+                    ).to(args.device).double()
                 
                 infstate = integrate(
                     integrator_infstate, infloader, init, 
@@ -177,9 +201,9 @@ if __name__ == '__main__':
                 print("rot_err: ", relative_infstate['rot_dist'].mean())
                 print("vel_err: ", relative_infstate['vel_dist'].mean())
                 
-                visualize_state_error(data_name,outstate,infstate,save_folder=folder,mask=mask,file_name="inte_error_compare.png")
-                visualize_state_error(data_name,relative_outstate,relative_infstate,mask=select_mask,save_folder=folder)
-            visualize_rotations(data_name,outstate['orientations_gt'][0],outstate['orientations'][0],infstate['orientations'][0],save_folder=folder)
+                visualize_state_error(safe_data_name,outstate,infstate,save_folder=folder,mask=mask,file_name="inte_error_compare.png")
+                visualize_state_error(safe_data_name,relative_outstate,relative_infstate,mask=select_mask,save_folder=folder)
+            visualize_rotations(safe_data_name,outstate['orientations_gt'][0],outstate['orientations'][0],infstate['orientations'][0],save_folder=folder)
             
         file_path = os.path.join(folder, "loss_result.json")
         with open(file_path, 'w') as f: 

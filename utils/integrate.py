@@ -13,6 +13,8 @@ def integrate(integrator, loader, init, device="cpu", gtinit=False, save_full_tr
     save_full_traj:
         If save_full_traj is True, save the full trajectory.
         If save_full_traj is False, save the last frame of each segment.
+    use_gt_rot:
+        If use_gt_rot is True, use ground truth rotation for gravity compensation.
     """
     # states to ouput
     integrator.eval()
@@ -21,6 +23,10 @@ def integrate(integrator, loader, init, device="cpu", gtinit=False, save_full_tr
     orientations,orientations_gt =  [init['rot'][None,:]], [init['rot'][None,:]]
     vel, vel_gt = [init['vel'][None,:]], [init['vel'][None,:]]
     covs = [torch.zeros(9, 9)]
+    
+    # Check if integrator is IMUIntegratorWithGTRot
+    is_gtrot_integrator = integrator.__class__.__name__ == 'IMUIntegratorWithGTRot'
+    
     for idx, data in tqdm.tqdm(enumerate(loader)):
         data = move_to(data, device)
         if gtinit:
@@ -32,12 +38,23 @@ def integrate(integrator, loader, init, device="cpu", gtinit=False, save_full_tr
         else:
             init_state = None
         
-        init_rot = data['init_rot'] if use_gt_rot else None
-        state = integrator(
-            init_state = init_state, dt=data['dt'],
-            gyro=data['gyro'], acc=data['acc'],
-            rot=init_rot
-        )
+        # Handle different integrator types
+        if is_gtrot_integrator:
+            # IMUIntegratorWithGTRot requires gt_rot parameter
+            gt_rot = data['init_rot'] if use_gt_rot else data['gt_rot']
+            state = integrator(
+                init_state=init_state, dt=data['dt'],
+                gyro=data['gyro'], acc=data['acc'],
+                gt_rot=gt_rot
+            )
+        else:
+            # IMUPreintegrator uses rot parameter (optional)
+            init_rot = data['init_rot'] if use_gt_rot else None
+            state = integrator(
+                init_state=init_state, dt=data['dt'],
+                gyro=data['gyro'], acc=data['acc'],
+                rot=init_rot
+            )
 
         if save_full_traj:
             vel.append(state['vel'][..., :, :].cpu())
@@ -54,8 +71,12 @@ def integrate(integrator, loader, init, device="cpu", gtinit=False, save_full_tr
             poses_gt.append(data['gt_pos'][..., -1:, :].cpu())
             poses.append(state['pos'][..., -1:, :].cpu())
         
-        
-        covs.append(state['cov'][..., -1, :, :].cpu())
+        # Handle covariance (only available for IMUPreintegrator)
+        if 'cov' in state and state['cov'] is not None:
+            covs.append(state['cov'][..., -1, :, :].cpu())
+        else:
+            covs.append(torch.zeros(9, 9))
+            
     out_state['vel'] = torch.cat(vel, dim=-2)
     out_state['vel_gt'] = torch.cat(vel_gt, dim=-2)
 

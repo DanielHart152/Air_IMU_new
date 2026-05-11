@@ -52,7 +52,7 @@ def evaluate(network, loader, confs, silent_tqdm=False):
                     "vel": inte_state['vel'][:,-1],
                 }
             inte_state = network(data, init_state)
-            loss_state = get_RMSE(inte_state, label)
+            loss_state = get_RMSE(inte_state, label, gtrot=confs.gtrot)
 
             save_state(loss_states, loss_state)
             save_state(evaluate_states, inte_state)
