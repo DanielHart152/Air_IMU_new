@@ -2,6 +2,15 @@
 import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 
+# Redirect pypose imports to my_pypose before any other imports
+# Import my_pypose directly without adding to sys.path to avoid conflicts
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("my_pypose", Path(__file__).parent.parent / 'my_pypose' / '__init__.py')
+my_pypose_module = importlib.util.module_from_spec(spec)
+sys.modules['pypose'] = my_pypose_module
+spec.loader.exec_module(my_pypose_module)
+
 import os
 import json
 import argparse
