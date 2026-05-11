@@ -6,6 +6,7 @@ from .mpc import MPC
 from .pf import PF
 from .dynamics import System, LTI, LTV, NLS
 from .imu_preintegrator import IMUPreintegrator
+from .imu_integrator_gtrot import IMUIntegratorWithGTRot
 from .pnp import EPnP
 from .icp import ICP
 from .loss import GeodesicLoss
