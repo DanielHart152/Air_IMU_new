@@ -27,16 +27,22 @@ def get_loss(inte_state, data, confs):
     loss_fc = loss_fc_list[confs.loss]
     rotloss_fc = loss_fc_list[confs.rotloss]
     
-    rot_loss, rot_dist = loss_(rotloss_fc, inte_state['rot'], data['gt_rot'], sampling = confs.sampling, dtype='rot')
+    # Skip rotation loss when using ground truth rotation
+    if not confs.gtrot:
+        rot_loss, rot_dist = loss_(rotloss_fc, inte_state['rot'], data['gt_rot'], sampling = confs.sampling, dtype='rot')
+        state_losses['rot'] = rot_dist[:,-1,:].norm(dim=-1).mean()
+    else:
+        rot_loss = 0.0
+        state_losses['rot'] = torch.tensor(0.0, device=data['gt_vel'].device)
+    
     vel_loss, vel_dist = loss_(loss_fc, inte_state['vel'], data['gt_vel'], sampling = confs.sampling)
     pos_loss, pos_dist = loss_(loss_fc, inte_state['pos'], data['gt_pos'], sampling = confs.sampling)
 
     state_losses['pos'] = pos_dist[:,-1,:].norm(dim=-1).mean()
-    state_losses['rot'] = rot_dist[:,-1,:].norm(dim=-1).mean()
     state_losses['vel'] = vel_dist[:,-1,:].norm(dim=-1).mean()
 
-    # Apply the covariance loss
-    if confs.propcov:
+    # Apply the covariance loss (only when not using gtrot)
+    if confs.propcov and not confs.gtrot:
         cov_diag = torch.diagonal(inte_state['cov'], dim1=-2, dim2=-1)
         cov_losses['pred_cov_rot'] = cov_diag[...,:3].mean()
         cov_losses['pred_cov_vel'] = cov_diag[...,3:6].mean()
@@ -51,13 +57,18 @@ def get_loss(inte_state, data, confs):
             vel_loss += confs.cov_weight * diag_ln_cov_loss(vel_dist.detach(), cov_diag[...,3:6])
             pos_loss += confs.cov_weight * diag_ln_cov_loss(pos_dist.detach(), cov_diag[...,-3:])
 
-    loss += (confs.pos_weight * pos_loss + confs.rot_weight * rot_loss + confs.vel_weight * vel_loss)
+    # Calculate total loss
+    if confs.gtrot:
+        # When using gtrot, only use position and velocity loss
+        loss += (confs.pos_weight * pos_loss + confs.vel_weight * vel_loss)
+    else:
+        loss += (confs.pos_weight * pos_loss + confs.rot_weight * rot_loss + confs.vel_weight * vel_loss)
     # report_hasNan(loss)
 
     return {'loss':loss, **state_losses, **cov_losses}
 
 
-def get_RMSE(inte_state, data):
+def get_RMSE(inte_state, data, gtrot=False):
     '''
     get the RMSE of the last state in one segment
     '''
@@ -66,14 +77,22 @@ def get_RMSE(inte_state, data):
 
     dist_pos = (inte_state['pos'][:,-1,:] - data['gt_pos'][:,-1,:])
     dist_vel = (inte_state['vel'][:,-1,:] - data['gt_vel'][:,-1,:])
-    dist_rot = (data['gt_rot'][:,-1,:] * inte_state['rot'][:,-1,:].Inv()).Log()
-
+    
     pos_loss = _RMSE(dist_pos)[None,...]
     vel_loss = _RMSE(dist_vel)[None,...]
-    rot_loss = _RMSE(dist_rot)[None,...]
+    
+    # Skip rotation loss when using ground truth rotation
+    if not gtrot:
+        dist_rot = (data['gt_rot'][:,-1,:] * inte_state['rot'][:,-1,:].Inv()).Log()
+        rot_loss = _RMSE(dist_rot)[None,...]
+        rot_dist_mean = dist_rot.norm(dim=-1).mean()
+    else:
+        rot_loss = torch.tensor(0.0, device=dist_pos.device)[None,...]
+        dist_rot = torch.zeros_like(dist_pos)
+        rot_dist_mean = torch.tensor(0.0, device=dist_pos.device)
 
     ## Relative pos error
     return {'pos': pos_loss, 'rot': rot_loss, 'vel': vel_loss, 
             'pos_dist': dist_pos.norm(dim=-1).mean(),
             'vel_dist': dist_vel.norm(dim=-1).mean(),
-            'rot_dist': dist_rot.norm(dim=-1).mean(),}
+            'rot_dist': rot_dist_mean,}

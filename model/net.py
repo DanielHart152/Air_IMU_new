@@ -6,11 +6,22 @@ class ModelBase(nn.Module):
     def __init__(self, conf):
         super().__init__()
         self.conf = conf
-        if "gravity" in conf.keys():
-            self.integrator = pp.module.IMUPreintegrator(prop_cov=conf.propcov, reset=True, gravity = 0.0)
-            print("conf.ngravity", conf.ngravity, self.integrator.gravity)
+        
+        # Use IMUIntegratorWithGTRot when gtrot is True
+        if conf.gtrot:
+            if "gravity" in conf.keys():
+                self.integrator = pp.module.IMUIntegratorWithGTRot(reset=True, gravity=0.0)
+                print("Using IMUIntegratorWithGTRot with gravity:", 0.0)
+            else:
+                self.integrator = pp.module.IMUIntegratorWithGTRot(reset=True)
+                print("Using IMUIntegratorWithGTRot with default gravity")
         else:
-            self.integrator = pp.module.IMUPreintegrator(prop_cov=conf.propcov, reset=True)
+            if "gravity" in conf.keys():
+                self.integrator = pp.module.IMUPreintegrator(prop_cov=conf.propcov, reset=True, gravity=0.0)
+                print("conf.ngravity", conf.ngravity, self.integrator.gravity)
+            else:
+                self.integrator = pp.module.IMUPreintegrator(prop_cov=conf.propcov, reset=True)
+        
         print("network constructed: ", self.conf.network, "gtrot: ", self.conf.gtrot)
 
     def _select(self, data, start, end):
@@ -47,33 +58,50 @@ class ModelBase(nn.Module):
                         "vel": inte_state["vel"][:,-1:,:],
                         "rot": inte_state["rot"][:,-1:,:],
                     }
-                    if self.conf.propcov:
+                    if self.conf.propcov and not self.conf.gtrot:
                         init_state["Rij"] = inte_state["Rij"]
                         init_state["cov"] = inte_state["cov"]
 
                 if self.conf.gtrot:
                     gt_rot = selected_data['rot']
-                
-                ## starting point and ending point                
-                inte_state = self.integrator(init_state = init_state, dt = selected_data['dt'], gyro = selected_data['corrected_gyro'],
-                            acc = selected_data['corrected_acc'], rot = gt_rot, acc_cov = selected_cov_state['acc_cov'], gyro_cov = selected_cov_state['gyro_cov'])
+                    # Use IMUIntegratorWithGTRot - no covariance parameters
+                    inte_state = self.integrator(init_state=init_state, dt=selected_data['dt'], 
+                                                gyro=selected_data['corrected_gyro'],
+                                                acc=selected_data['corrected_acc'], gt_rot=gt_rot)
+                else:
+                    # Use IMUPreintegrator with covariance
+                    inte_state = self.integrator(init_state=init_state, dt=selected_data['dt'], 
+                                                gyro=selected_data['corrected_gyro'],
+                                                acc=selected_data['corrected_acc'], rot=gt_rot, 
+                                                acc_cov=selected_cov_state['acc_cov'], 
+                                                gyro_cov=selected_cov_state['gyro_cov'])
             
                 inte_pos.append(inte_state['pos'])
                 inte_rot.append(inte_state['rot'])
                 inte_vel.append(inte_state['vel'])
-                inte_cov.append(inte_state['cov'])
+                if not self.conf.gtrot and self.conf.propcov:
+                    inte_cov.append(inte_state['cov'])
             
             out_state ={
                 'pos': torch.cat(inte_pos, dim =1),
                 'vel': torch.cat(inte_vel, dim =1),
                 'rot': torch.cat(inte_rot, dim =1),
             }
-            if self.conf.propcov:
+            if self.conf.propcov and not self.conf.gtrot:
                 out_state['cov'] = torch.stack(inte_cov, dim =1)
         else:
-            
-            out_state = self.integrator(init_state = init_state, dt = data['dt'], gyro = data['corrected_gyro'],
-                            acc = data['corrected_acc'], rot = gt_rot, acc_cov = cov_state['acc_cov'], gyro_cov = cov_state['gyro_cov'])
+            if self.conf.gtrot:
+                # Use IMUIntegratorWithGTRot - no covariance parameters
+                out_state = self.integrator(init_state=init_state, dt=data['dt'], 
+                                          gyro=data['corrected_gyro'],
+                                          acc=data['corrected_acc'], gt_rot=gt_rot)
+            else:
+                # Use IMUPreintegrator with covariance
+                out_state = self.integrator(init_state=init_state, dt=data['dt'], 
+                                          gyro=data['corrected_gyro'],
+                                          acc=data['corrected_acc'], rot=gt_rot, 
+                                          acc_cov=cov_state['acc_cov'], 
+                                          gyro_cov=cov_state['gyro_cov'])
         
         return {**out_state, **cov_state}
 
