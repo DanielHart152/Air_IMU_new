@@ -39,7 +39,8 @@ class ModelBase(nn.Module):
         inte_pos, inte_vel, inte_rot, inte_cov = [], [], [], []
         gt_rot = None
         if self.conf.gtrot:
-            gt_rot = data['rot']
+            # Use corrected rotation (gt_rot * exp(delta_so3))
+            gt_rot = data.get('corrected_rot', data['rot'])
         if "posonly" in self.conf.keys():
             data['corrected_gyro'] = data['gyro']
 
@@ -63,7 +64,7 @@ class ModelBase(nn.Module):
                         init_state["cov"] = inte_state["cov"]
 
                 if self.conf.gtrot:
-                    gt_rot = selected_data['rot']
+                    gt_rot = selected_data.get('corrected_rot', selected_data['rot'])
                     # Use IMUIntegratorWithGTRot - no covariance parameters
                     inte_state = self.integrator(init_state=init_state, dt=selected_data['dt'], 
                                                 gyro=selected_data['corrected_gyro'],
@@ -118,7 +119,11 @@ class ModelBase(nn.Module):
         
         # Correction update
         data['corrected_acc'] = correction[...,:3] + data["acc"]
-        data['corrected_gyro'] = correction[...,3:] + data["gyro"]
+        
+        # Compose rotation: corrected_rot = gt_rot * exp(delta_so3)
+        delta_so3 = pp.so3(correction[...,3:])
+        data['corrected_rot'] = data['rot'] * delta_so3.Exp()
+        data['corrected_gyro'] = data["gyro"]  # Keep original gyro
 
         # covariance propagation
         cov_state = {'acc_cov':None, 'gyro_cov': None,}
@@ -126,7 +131,7 @@ class ModelBase(nn.Module):
             cov = self.cov_decoder(feature)
             cov_state['acc_cov'] = cov[...,:3]; cov_state['gyro_cov'] = cov[...,3:]
 
-        return {**cov_state, 'correction_acc': correction[...,:3], 'correction_gyro': correction[...,3:]}
+        return {**cov_state, 'correction_acc': correction[...,:3], 'correction_delta_so3': correction[...,3:]}
  
     ## For reference
     def forward(self, data, init_state):
@@ -139,7 +144,11 @@ class ModelBase(nn.Module):
 
         # Correction update
         data['corrected_acc'] = correction[...,:3] + data["acc"]
-        data['corrected_gyro'] = correction[...,3:] + data["gyro"]
+        
+        # Compose rotation: corrected_rot = gt_rot * exp(delta_so3)
+        delta_so3 = pp.so3(correction[...,3:])
+        data['corrected_rot'] = data['rot'] * delta_so3.Exp()
+        data['corrected_gyro'] = data["gyro"]  # Keep original gyro
 
         # covariance propagation
         cov_state = {'acc_cov':None, 'gyro_cov': None,}
@@ -148,4 +157,4 @@ class ModelBase(nn.Module):
             cov_state['acc_cov'] = cov[...,:3]; cov_state['gyro_cov'] = cov[...,3:]
 
         out_state = self.integrate(init_state = init_state, data = data, cov_state = cov_state)
-        return {**out_state, 'correction_acc': correction[...,:3], 'correction_gyro': correction[...,3:]}
+        return {**out_state, 'correction_acc': correction[...,:3], 'correction_delta_so3': correction[...,3:]}

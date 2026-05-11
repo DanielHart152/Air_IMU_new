@@ -39,8 +39,8 @@ class CodeNet(ModelBase):
         self.accdecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
         self.acccov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
 
-        self.gyrodecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
-        self.gyrocov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
+        self.delta_so3_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
+        self.delta_so3_cov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
 
     def encoder(self, imu, rot, d_vel):
         imu_feat = self.imu_cnn(imu.transpose(-1,-2)).transpose(-1,-2)
@@ -55,15 +55,15 @@ class CodeNet(ModelBase):
 
     def cov_decoder(self, x):
         acc = torch.exp(self.acccov_decoder(x) - 5.)
-        gyro = torch.exp(self.gyrocov_decoder(x) - 5.)
+        delta_so3 = torch.exp(self.delta_so3_cov_decoder(x) - 5.)
 
-        return torch.cat([acc, gyro], dim = -1)
+        return torch.cat([acc, delta_so3], dim = -1)
 
     def decoder(self, x):
         acc = self.accdecoder(x) * self.acc_std
-        gyro = self.gyrodecoder(x) * self.gyro_std
+        delta_so3 = self.delta_so3_decoder(x) * self.gyro_std
 
-        return torch.cat([acc, gyro], dim = -1)
+        return torch.cat([acc, delta_so3], dim = -1)
 
     def _update(self, to_update, feat, frame_len):
         ### Note: This will change the data in the to_update !!!!!!
@@ -99,7 +99,7 @@ class CodeNet(ModelBase):
 
         # a referenced size 1000
         correction_acc = self._update(zero_signal.clone(), correction[...,:3], frame_len)
-        correction_gyro = self._update(zero_signal.clone(), correction[...,3:], frame_len)
+        correction_delta_so3 = self._update(zero_signal.clone(), correction[...,3:], frame_len)
 
         # covariance propagation
         cov_state = {'acc_cov':None, 'gyro_cov': None,}
@@ -107,141 +107,28 @@ class CodeNet(ModelBase):
             cov = self.cov_decoder(feature)
             cov_state['acc_cov'] = self._update(torch.zeros_like(correction_acc, device=correction_acc.device),
                                                 cov[...,:3], frame_len)
-            cov_state['gyro_cov'] = self._update(torch.zeros_like(correction_gyro, device=correction_gyro.device),
+            cov_state['gyro_cov'] = self._update(torch.zeros_like(correction_delta_so3, device=correction_delta_so3.device),
                                                 cov[...,3:], frame_len)
         
-        return {"cov_state": cov_state, 'correction_acc': correction_acc, 'correction_gyro': correction_gyro}
+        return {"cov_state": cov_state, 'correction_acc': correction_acc, 'correction_delta_so3': correction_delta_so3}
 
     def forward(self, data, init_state):
         inference_state = self.inference(data)
 
         data['corrected_acc'] = data['acc'][:,self.interval:,:] + inference_state['correction_acc']
-        data['corrected_gyro'] = data['gyro'][:,self.interval:,:] + inference_state['correction_gyro']
-        data['rot'] = data['rot'][:,self.interval:,:]
+        
+        # Compose rotation: corrected_rot = gt_rot * exp(delta_so3)
+        gt_rot_sliced = data['rot'][:,self.interval:,:]
+        delta_so3 = pp.so3(inference_state['correction_delta_so3'])
+        data['corrected_rot'] = gt_rot_sliced * delta_so3.Exp()
+        
+        # Convert corrected rotation to gyro for integration
+        data['corrected_gyro'] = data['gyro'][:,self.interval:,:]  # Keep original gyro for now
+        data['rot'] = data['corrected_rot']
         data['vel'] = data['vel'][:,self.interval:,:]
 
         out_state = self.integrate(init_state = init_state, data = data, cov_state = inference_state['cov_state'])
 
-        return {**out_state, 'correction_acc': inference_state['correction_acc'], 'correction_gyro': inference_state['correction_gyro'], 
-                                'corrected_acc': data['corrected_acc'], 'corrected_gyro': data['corrected_gyro']}
+        return {**out_state, 'correction_acc': inference_state['correction_acc'], 'correction_delta_so3': inference_state['correction_delta_so3'], 
+                                'corrected_acc': data['corrected_acc'], 'corrected_rot': data['corrected_rot']}
 
-
-class CodePoseNet(CodeNet):
-    def __init__(self, conf):
-        super().__init__(conf)
-
-    def inference(self, data):
-        frame_len = data["acc"].shape[1] - self.interval
-        imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
-        d_vel = data["vel"][..., 2:3]
-        
-        feature = self.encoder(imu, rot, d_vel)[:,1:,:]
-        correction = self.decoder(feature)
-        zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
-
-        # a referenced size 1000
-        correction_acc = self._update(zero_signal.clone(), correction[...,:3], frame_len)
-        correction_gyro = zero_signal.clone()
-
-        # covariance propagation
-        cov_state = {'acc_cov':None, 'gyro_cov': None,}
-        if self.conf.propcov:
-            cov = self.cov_decoder(feature)
-            cov_state['acc_cov'] = self._update(torch.zeros_like(correction_acc, device=correction_acc.device),
-                                                cov[...,:3], frame_len)
-            cov_state['gyro_cov'] = self._update(torch.zeros_like(correction_gyro, device=correction_gyro.device),
-                                                cov[...,3:], frame_len)
-        
-        return {"cov_state": cov_state, 'correction_acc': correction_acc, 'correction_gyro': correction_gyro}
-
-
-class CodeNetKITTI(torch.nn.Module):
-    def __init__(self, conf):
-        super().__init__()
-        self.conf = conf
-        self.integrator = pp.module.IMUPreintegrator(prop_cov=conf.propcov, reset=True).double()
-        
-        self.accEncoder  = CNNEncoder(k_list=[7, 3, 3], p_list=[3, 1, 1], c_list=[3, 32, 64, 128])
-        self.gyroEncoder = CNNEncoder(k_list=[7, 3, 3], p_list=[3, 1, 1], c_list=[3, 32, 64, 128])
-        
-        self.accDecoder = nn.Sequential(
-            nn.Linear(128, 64), nn.GELU(), nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 3)
-        )
-        self.gyroDecoder = nn.Sequential(
-            nn.Linear(128, 64), nn.GELU(), nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 3)
-        )
-        self.accCovDecoder  = nn.Sequential(
-            nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 32), nn.GELU(), nn.Linear(32, 3)
-        )
-        self.gyroCovDecoder = nn.Sequential(
-            nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 32), nn.GELU(), nn.Linear(32, 3)
-        )
-
-        gyro_std = np.pi/180
-        self.register_buffer('gyro_std', torch.tensor(gyro_std))
-
-        acc_std = 0.1
-        self.register_buffer('acc_std', torch.tensor(acc_std))
-    
-    def integrate(self, init_state, data, cov_state, use_gtrot):
-        gt_rot = None
-        if self.conf.gtrot: gt_rot = data['rot'].double()
-        if not use_gtrot: gt_rot = None
-
-        if self.conf.propcov:
-            out_state = self.integrator(
-                init_state = init_state, 
-                dt = data['dt'].double(), 
-                gyro = data['corrected_gyro'].double(),
-                acc = data['corrected_acc'].double(), 
-                rot = gt_rot, 
-                acc_cov = cov_state['acc_cov'].double(), 
-                gyro_cov = cov_state['gyro_cov'].double()
-            )
-        else:
-            out_state = self.integrator(
-                init_state = init_state, 
-                dt = data['dt'].double(), 
-                gyro = data['corrected_gyro'].double(),
-                acc = data['corrected_acc'].double(), 
-                rot = gt_rot, 
-            )
-        
-        return {**out_state, **cov_state}
-
-    def inference(self, data):
-        feature_acc  = self.accEncoder(data["acc"].transpose(-1,-2)).transpose(-1,-2)
-        feature_gyro = self.gyroEncoder(data["gyro"].transpose(-1,-2)).transpose(-1,-2)
-        
-        correction_acc  = self.accDecoder(feature_acc)
-        correction_gyro = self.gyroDecoder(feature_gyro)
-
-        cov_state = {'acc_cov':None, 'gyro_cov': None}
-        if self.conf.propcov:
-            feature = torch.cat([feature_acc, feature_gyro], dim = -1)
-            cov_state['acc_cov']  = self.accCovDecoder(feature).exp()
-            cov_state['gyro_cov'] = self.gyroCovDecoder(feature).exp()
-        
-        return {"cov_state": cov_state, 'correction_acc': correction_acc, 'correction_gyro': correction_gyro}
-
-    def forward(self, data, init_state, use_gtrot=True):   
-        init_state_ = {
-            "pos": init_state["pos"],
-            "rot": init_state["rot"][:,:1,:],
-            "vel": init_state["vel"],
-        }     
-        inference_state = self.inference(data)
-
-        data['corrected_acc'] = data['acc'] + inference_state['correction_acc']
-        data['corrected_gyro'] = data['gyro'] + inference_state['correction_gyro']
-
-        out_state = self.integrate(init_state=init_state_, data = data, cov_state = inference_state['cov_state'], use_gtrot=use_gtrot)
-        
-        return {
-            **out_state, 
-            'correction_acc': inference_state['correction_acc'], 
-            'correction_gyro': inference_state['correction_gyro'], 
-            'corrected_acc': data['corrected_acc'], 
-            'corrected_gyro': data['corrected_gyro']
-        }
