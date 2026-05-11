@@ -110,7 +110,7 @@ class ModelBase(nn.Module):
         Pure inference, generate the network output.
         '''
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        rot = data["rot"].tensor()
+        rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
         
         feature = self.encoder(imu, rot, d_vel)
@@ -131,7 +131,7 @@ class ModelBase(nn.Module):
     ## For reference
     def forward(self, data, init_state):
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        rot = data["rot"].tensor()
+        rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
         
         feature = self.encoder(imu, rot, d_vel)

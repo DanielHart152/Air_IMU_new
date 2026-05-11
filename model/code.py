@@ -30,7 +30,7 @@ class CodeNet(ModelBase):
         self.inter_tail = self.interval - self.inter_head
 
         self.imu_cnn = CNNEncoder(c_list=[6, 32, 64], k_list=[7, 7], s_list=[3, 3])# acc(3) + gyro(3)
-        self.rot_cnn = CNNEncoder(c_list=[4, 16, 32], k_list=[7, 7], s_list=[3, 3])# rot(4)
+        self.rot_cnn = CNNEncoder(c_list=[3, 16, 32], k_list=[7, 7], s_list=[3, 3])# rot_so3(3) - Lie algebra
         self.d_vel_cnn = CNNEncoder(c_list=[1, 8, 16], k_list=[7, 7], s_list=[3, 3])# vel_z(1)
 
         self.gru1 = nn.GRU(input_size = 112, hidden_size = 128, num_layers = 1, batch_first = True)# 64+32+16=112
@@ -90,7 +90,7 @@ class CodeNet(ModelBase):
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        rot = data["rot"].tensor()
+        rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
         
         feature = self.encoder(imu, rot, d_vel)[:,1:,:]
@@ -133,7 +133,7 @@ class CodePoseNet(CodeNet):
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        rot = data["rot"].tensor()
+        rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
         
         feature = self.encoder(imu, rot, d_vel)[:,1:,:]
