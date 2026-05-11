@@ -220,7 +220,8 @@ class SeqeuncesDataset(Data.Dataset):
             'dt': self.dt[seq_id][frame_id: end_frame_id],
             'acc': self.acc[seq_id][frame_id: end_frame_id],
             'gyro': self.gyro[seq_id][frame_id: end_frame_id],
-            'rot': self.gt_ori[seq_id][frame_id: end_frame_id]
+            'rot': self.gt_ori[seq_id][frame_id: end_frame_id],
+            'vel': self.gt_velo[seq_id][frame_id: end_frame_id]
         }
         init_state = {
             'init_rot': self.gt_ori[seq_id][frame_id][None, ...],

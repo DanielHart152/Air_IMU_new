@@ -33,6 +33,7 @@ def custom_collate(data):
     acc = torch.stack([d['acc'] for d in data])
     gyro = torch.stack([d['gyro'] for d in data])
     rot = torch.stack([d['rot'] for d in data])
+    vel = torch.stack([d['vel'] for d in data])
 
     gt_pos = torch.stack([d['gt_pos'] for d in data])
     gt_rot = torch.stack([d['gt_rot'] for d in data])
@@ -42,7 +43,7 @@ def custom_collate(data):
     init_rot = torch.stack([d['init_rot'] for d in data])
     init_vel = torch.stack([d['init_vel'] for d in data])
 
-    return  {'dt': dt, 'acc': acc, 'gyro': gyro, 'rot':rot,}, \
+    return  {'dt': dt, 'acc': acc, 'gyro': gyro, 'rot':rot, 'vel':vel}, \
             {'pos': init_pos, 'vel': init_vel, 'rot': init_rot,}, \
             {'gt_pos': gt_pos, 'gt_vel': gt_vel, 'gt_rot': gt_rot, }
 
@@ -58,10 +59,12 @@ def padding_collate(data, pad_len = 1, use_gravity = True):
     pad_acc = init_state['rot'].Inv() * iden_acc_vector
     pad_gyro = torch.zeros(B, pad_len, 3, dtype=input_data['dt'].dtype)
     pad_rot = init_state['rot'].repeat(1, pad_len, 1)
+    pad_vel = init_state['vel'].repeat(1, pad_len, 1)
 
     input_data["acc"] = torch.cat([pad_acc, input_data['acc']], dim =1)
     input_data["gyro"] = torch.cat([pad_gyro, input_data['gyro']], dim =1)
     input_data["rot"] = torch.cat([pad_rot, input_data['rot']], dim =1)
+    input_data["vel"] = torch.cat([pad_vel, input_data['vel']], dim =1)
     
     return  input_data, init_state, label
 

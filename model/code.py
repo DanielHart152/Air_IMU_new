@@ -29,9 +29,11 @@ class CodeNet(ModelBase):
         self.inter_head = np.floor(self.interval/2.).astype(int)
         self.inter_tail = self.interval - self.inter_head
 
-        self.cnn = CNNEncoder(c_list=[10, 32, 64], k_list=[7, 7], s_list=[3, 3])# (N,F/8,64) - input: acc(3) + gyro(3) + rot(4)
+        self.imu_cnn = CNNEncoder(c_list=[6, 32, 64], k_list=[7, 7], s_list=[3, 3])# acc(3) + gyro(3)
+        self.rot_cnn = CNNEncoder(c_list=[4, 16, 32], k_list=[7, 7], s_list=[3, 3])# rot(4)
+        self.d_vel_cnn = CNNEncoder(c_list=[1, 8, 16], k_list=[7, 7], s_list=[3, 3])# vel_z(1)
 
-        self.gru1 = nn.GRU(input_size = 64, hidden_size = 128, num_layers = 1, batch_first = True)
+        self.gru1 = nn.GRU(input_size = 112, hidden_size = 128, num_layers = 1, batch_first = True)# 64+32+16=112
         self.gru2 = nn.GRU(input_size = 128, hidden_size = 256, num_layers = 1, batch_first = True)
 
         self.accdecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
@@ -40,8 +42,12 @@ class CodeNet(ModelBase):
         self.gyrodecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
         self.gyrocov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
 
-    def encoder(self, x):
-        x = self.cnn(x.transpose(-1,-2)).transpose(-1,-2)
+    def encoder(self, imu, rot, d_vel):
+        imu_feat = self.imu_cnn(imu.transpose(-1,-2)).transpose(-1,-2)
+        rot_feat = self.rot_cnn(rot.transpose(-1,-2)).transpose(-1,-2)
+        d_vel_feat = self.d_vel_cnn(d_vel.transpose(-1,-2)).transpose(-1,-2)
+        
+        x = torch.cat([imu_feat, rot_feat, d_vel_feat], dim=-1)
         x, _ = self.gru1(x)
         x, _ = self.gru2(x)
 
@@ -83,8 +89,11 @@ class CodeNet(ModelBase):
 
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
-        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
-        feature = self.encoder(feature)[:,1:,:]
+        imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        rot = data["rot"].tensor()
+        d_vel = data["vel"][..., 2:3]
+        
+        feature = self.encoder(imu, rot, d_vel)[:,1:,:]
         correction = self.decoder(feature)
         zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
 
@@ -109,6 +118,7 @@ class CodeNet(ModelBase):
         data['corrected_acc'] = data['acc'][:,self.interval:,:] + inference_state['correction_acc']
         data['corrected_gyro'] = data['gyro'][:,self.interval:,:] + inference_state['correction_gyro']
         data['rot'] = data['rot'][:,self.interval:,:]
+        data['vel'] = data['vel'][:,self.interval:,:]
 
         out_state = self.integrate(init_state = init_state, data = data, cov_state = inference_state['cov_state'])
 
@@ -122,8 +132,11 @@ class CodePoseNet(CodeNet):
 
     def inference(self, data):
         frame_len = data["acc"].shape[1] - self.interval
-        feature = torch.cat([data["acc"], data["gyro"], data["rot"].tensor()], dim = -1)
-        feature = self.encoder(feature)[:,1:,:]
+        imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
+        rot = data["rot"].tensor()
+        d_vel = data["vel"][..., 2:3]
+        
+        feature = self.encoder(imu, rot, d_vel)[:,1:,:]
         correction = self.decoder(feature)
         zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
 
