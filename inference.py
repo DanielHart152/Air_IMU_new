@@ -120,13 +120,38 @@ if __name__ == '__main__':
             inference_state = inference(network=network, loader = eval_loader, confs=conf.train)
             if not "acc_cov" in inference_state.keys():
                 inference_state["acc_cov"] = torch.zeros_like(inference_state["correction_acc"])
-            if not "gyro_cov" in inference_state.keys():
-                inference_state["gyro_cov"] = torch.zeros_like(inference_state["correction_gyro"])
             
-            inference_state['corrected_acc'] = eval_dataset.acc[0] + inference_state['correction_acc'].squeeze(0).cpu()
-            inference_state['corrected_gyro'] = eval_dataset.gyro[0] + inference_state['correction_gyro'].squeeze(0).cpu()
-            inference_state['rot'] = eval_dataset.gt_ori[0]
-            inference_state['dt'] = eval_dataset.dt[0]
+            # Handle different network outputs: delta_so3 (CodeNet) vs gyro correction (other models)
+            if "correction_delta_so3" in inference_state.keys():
+                
+                print( "+"* 5, "correction_acc", torch.mean(inference_state['correction_acc'], dim=1).squeeze(0))
+                print( "+"* 5, "correction_delta_so3", torch.mean(inference_state['correction_delta_so3'], dim=1).squeeze(0))
+                # CodeNet: outputs delta_so3 (rotation correction in Lie algebra)
+                if not "gyro_cov" in inference_state.keys():
+                    inference_state["gyro_cov"] = torch.zeros_like(inference_state["correction_delta_so3"])
+                
+                # inference_state['corrected_acc'] = eval_dataset.acc[0] + inference_state['correction_acc'].squeeze(0).cpu()
+                
+                # # # For delta_so3, compose with ground truth rotation: corrected_rot = gt_rot * exp(delta_so3)
+                # # import pypose as pp
+                # # gt_rot = eval_dataset.gt_ori[0]
+                # # delta_so3 = pp.so3(inference_state['correction_delta_so3'].squeeze(0).cpu())
+                # # corrected_rot = gt_rot * delta_so3.Exp()
+                
+                # # Store for evaluation
+                # inference_state['correction_gyro'] = inference_state['correction_delta_so3'].squeeze(0).cpu()
+                # inference_state['corrected_gyro'] = eval_dataset.gyro[0]  # Keep original gyro
+                inference_state['rot'] = eval_dataset.gt_ori[0]  # Use corrected rotation
+                inference_state['dt'] = eval_dataset.dt[0]
+            else:
+                # Other models: output gyro correction directly
+                if not "gyro_cov" in inference_state.keys():
+                    inference_state["gyro_cov"] = torch.zeros_like(inference_state["correction_gyro"])
+                
+                inference_state['corrected_acc'] = eval_dataset.acc[0] + inference_state['correction_acc'].squeeze(0).cpu()
+                inference_state['corrected_gyro'] = eval_dataset.gyro[0] + inference_state['correction_gyro'].squeeze(0).cpu()
+                inference_state['rot'] = eval_dataset.gt_ori[0]
+                inference_state['dt'] = eval_dataset.dt[0]
             
             net_out_result[path] = inference_state
 

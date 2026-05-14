@@ -81,7 +81,14 @@ class SeqInfDataset(SeqDataset):
                             drop_last = True, mode='inference', usecov = True, useraw = False,conf={}):
         super().__init__(root, dataname, device, name, duration, step_size, mode, drop_last, conf)
         self.data['acc'][:-1] += inference_state['correction_acc'].cpu()[0]
-        self.data['gyro'][:-1] += inference_state['correction_gyro'].cpu()[0]
+        
+        # Handle delta_so3: compose with ground truth rotation
+        # correction_gyro now contains delta_so3 values
+        import pypose as pp
+        if 'correction_delta_so3' in inference_state.keys():
+            delta_so3 = pp.so3(inference_state['correction_delta_so3'].cpu()[0])
+            corrected_rot = self.data['gt_orientation'][:-1] * delta_so3.Exp()
+            self.data['gt_orientation'][:-1] = corrected_rot
        
         if 'acc_cov' in inference_state.keys() and usecov:
             self.data['acc_cov'] = inference_state['acc_cov'][0]
