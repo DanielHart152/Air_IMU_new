@@ -25,7 +25,7 @@ from pyhocon import ConfigFactory
 from datasets import SeqInfDataset, SeqDataset, imu_seq_collate
 
 from utils import CPU_Unpickler, integrate
-from utils.visualize_state import visualize_rotations, visualize_state_error
+from utils.visualize_state import visualize_rotations, visualize_state_error, visualize_trajectory, visualize_velocity
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -203,6 +203,8 @@ if __name__ == '__main__':
                 
                 visualize_state_error(safe_data_name,outstate,infstate,save_folder=folder,mask=mask,file_name="inte_error_compare.png")
                 visualize_state_error(safe_data_name,relative_outstate,relative_infstate,mask=select_mask,save_folder=folder)
+                visualize_trajectory(safe_data_name, folder, outstate, infstate)
+                visualize_velocity(safe_data_name, folder, outstate, infstate, mask=mask)
             visualize_rotations(safe_data_name,outstate['orientations_gt'][0],outstate['orientations'][0],infstate['orientations'][0],save_folder=folder)
             
         file_path = os.path.join(folder, "loss_result.json")

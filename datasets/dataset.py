@@ -62,6 +62,7 @@ class SeqDataset(Data.Dataset):
             'init_pos': self.data['gt_translation'][frame_id][None, ...],
             'init_rot': self.data['gt_orientation'][frame_id: end_frame_id],
             'init_vel': self.data['velocity'][frame_id][None, ...],
+            'airspeed': self.data.get('airspeed', torch.zeros((end_frame_id - frame_id, 1)))[frame_id: end_frame_id],
         }
 
     def get_init_value(self):
@@ -81,7 +82,14 @@ class SeqInfDataset(SeqDataset):
                             drop_last = True, mode='inference', usecov = True, useraw = False,conf={}):
         super().__init__(root, dataname, device, name, duration, step_size, mode, drop_last, conf)
         self.data['acc'][:-1] += inference_state['correction_acc'].cpu()[0]
-        self.data['gyro'][:-1] += inference_state['correction_gyro'].cpu()[0]
+        
+        # Handle delta_so3: compose with ground truth rotation
+        # correction_gyro now contains delta_so3 values
+        import pypose as pp
+        if 'correction_delta_so3' in inference_state.keys():
+            delta_so3 = pp.so3(inference_state['correction_delta_so3'].cpu()[0])
+            corrected_rot = self.data['gt_orientation'][:-1] * delta_so3.Exp()
+            self.data['gt_orientation'][:-1] = corrected_rot
        
         if 'acc_cov' in inference_state.keys() and usecov:
             self.data['acc_cov'] = inference_state['acc_cov'][0]
@@ -106,9 +114,10 @@ class SeqeuncesDataset(Data.Dataset):
             self.gt_pos,
             self.gt_ori,
             self.gt_velo,
+            self.airspeed,
             self.index_map,
             self.seq_idx,
-        ) = ([], [], [], [], [], [], [], [], 0)
+        ) = ([], [], [], [], [], [], [], [], [], 0)
         self.uni = torch.distributions.uniform.Uniform(-torch.ones(1), torch.ones(1))
         self.device = device
         self.conf = data_set_config
@@ -146,6 +155,12 @@ class SeqeuncesDataset(Data.Dataset):
         self.gt_pos.append(seq.data["gt_translation"][start_frame:end_frame+1])
         self.gt_ori.append(seq.data["gt_orientation"][start_frame:end_frame+1])
         self.gt_velo.append(seq.data["velocity"][start_frame:end_frame+1])
+        
+        # Load airspeed if available
+        if "airspeed" in seq.data.keys():
+            if not hasattr(self, 'airspeed'):
+                self.airspeed = []
+            self.airspeed.append(seq.data["airspeed"][start_frame:end_frame])
 
     def construct_index_map(self, conf, data_root, data_name, seq_id):
         seq = self.DataClass[conf.name](data_root, data_name, intepolate = True, **self.conf)
@@ -223,6 +238,14 @@ class SeqeuncesDataset(Data.Dataset):
             'rot': self.gt_ori[seq_id][frame_id: end_frame_id],
             'vel': self.gt_velo[seq_id][frame_id: end_frame_id]
         }
+        
+        # Add airspeed if available
+        if hasattr(self, 'airspeed') and len(self.airspeed) > seq_id:
+            data['airspeed'] = self.airspeed[seq_id][frame_id: end_frame_id]
+        else:
+            # Default to zeros if not available
+            data['airspeed'] = torch.zeros((end_frame_id - frame_id, 1), dtype=data['acc'].dtype)
+        
         init_state = {
             'init_rot': self.gt_ori[seq_id][frame_id][None, ...],
             'init_pos': self.gt_pos[seq_id][frame_id][None, ...],

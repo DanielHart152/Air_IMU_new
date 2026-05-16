@@ -4,8 +4,6 @@ from .others import Identity, ParamNet
 from .code import *
 
 net_dict = {
-    'codeposenet': CodePoseNet,
-    'codenetkitti': CodeNetKITTI,
     'iden': Identity,
     'cnnpos': CNNPOS,
     'codenet': CodeNet,

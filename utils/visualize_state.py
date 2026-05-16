@@ -75,6 +75,55 @@ def visualize_rotations(save_prefix, gt_rot, out_rot, inf_rot = None,save_folder
     plt.show()
 
 
+def visualize_velocity(save_prefix, save_folder, outstate, infstate, mask=None):
+    # Get velocity data - note that vel tensors are already on CPU from integrate function
+    gt_vel = outstate["vel_gt"][0]
+    raw_vel = outstate["vel"][0]
+    air_vel = infstate["vel"][0]
+    
+    # Apply mask if provided
+    if mask is not None:
+        # Ensure mask length matches tensor length
+        mask_len = min(len(mask), gt_vel.shape[0])
+        mask = mask[:mask_len]
+        gt_vel = gt_vel[:mask_len][mask]
+        raw_vel = raw_vel[:mask_len][mask]
+        air_vel = air_vel[:mask_len][mask]
+    
+    gt_vx, gt_vy, gt_vz = torch.split(gt_vel, 1, dim=1)
+    raw_vx, raw_vy, raw_vz = torch.split(raw_vel, 1, dim=1)
+    air_vx, air_vy, air_vz = torch.split(air_vel, 1, dim=1)
+    
+    fig, axs = plt.subplots(3, 1, figsize=(10, 8))
+    fig.suptitle("Velocity Components Comparison")
+    
+    axs[0].plot(raw_vx, color='b', linewidth=0.9, label="Raw")
+    axs[0].plot(air_vx, color='red', linewidth=0.9, label="AirIMU")
+    axs[0].plot(gt_vx, color='mediumseagreen', linewidth=0.9, label="Ground Truth")
+    axs[0].set_ylabel('vx (m/s)')
+    axs[0].legend()
+    axs[0].grid(True)
+    
+    axs[1].plot(raw_vy, color='b', linewidth=0.9, label="Raw")
+    axs[1].plot(air_vy, color='red', linewidth=0.9, label="AirIMU")
+    axs[1].plot(gt_vy, color='mediumseagreen', linewidth=0.9, label="Ground Truth")
+    axs[1].set_ylabel('vy (m/s)')
+    axs[1].legend()
+    axs[1].grid(True)
+    
+    axs[2].plot(raw_vz, color='b', linewidth=0.9, label="Raw")
+    axs[2].plot(air_vz, color='red', linewidth=0.9, label="AirIMU")
+    axs[2].plot(gt_vz, color='mediumseagreen', linewidth=0.9, label="Ground Truth")
+    axs[2].set_ylabel('vz (m/s)')
+    axs[2].set_xlabel('Time Steps')
+    axs[2].legend()
+    axs[2].grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_folder, save_prefix + "_velocity_components.png"), dpi=300)
+    plt.close()
+
+
 def visualize_trajectory(save_prefix, save_folder, outstate, infstate):
     gt_x, gt_y, gt_z                = torch.split(outstate["poses_gt"][0].cpu(), 1, dim=1)
     rawTraj_x, rawTraj_y, rawTraj_z = torch.split(outstate["poses"][0].cpu(), 1, dim=1)
