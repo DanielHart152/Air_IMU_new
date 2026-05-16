@@ -113,8 +113,9 @@ class ModelBase(nn.Module):
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
         rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
+        airspeed = data.get("airspeed", torch.zeros_like(d_vel))
         
-        feature = self.encoder(imu, rot, d_vel)
+        feature = self.encoder(imu, rot, d_vel, airspeed)
         correction = self.decoder(feature)
         
         # Correction update
@@ -138,8 +139,9 @@ class ModelBase(nn.Module):
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
         rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
+        airspeed = data.get("airspeed", torch.zeros_like(d_vel))
         
-        feature = self.encoder(imu, rot, d_vel)
+        feature = self.encoder(imu, rot, d_vel, airspeed)
         correction = self.decoder(feature)
 
         # Correction update

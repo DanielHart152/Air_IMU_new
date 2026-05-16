@@ -74,6 +74,12 @@ class BlackBird(Sequence):
         thrusts = np.asarray(self.thrusts)
 
         data_tmp = self.gt_data
+        
+        # Extract airspeed from column 8 if it exists
+        if data_tmp.shape[1] > 8:
+            airspeed_data = data_tmp[:, 8]
+        else:
+            airspeed_data = None
 
 
         data = []
@@ -184,6 +190,14 @@ class BlackBird(Sequence):
         self.data["time"] = torch.tensor(times_imu)
         self.data["dt"] = (self.data["time"][1:] - self.data["time"][:-1])[:, None]
         self.data["mask"] = torch.ones(self.data["time"].shape[0], dtype=torch.bool)
+        
+        # Interpolate airspeed to IMU timestamps if available
+        if airspeed_data is not None:
+            airspeed_interp = interp1d(gt_traj_tmp[:, 0], airspeed_data, axis=0, fill_value="extrapolate")(times_imu)
+            self.data["airspeed"] = torch.tensor(airspeed_interp).unsqueeze(-1)
+        else:
+            # If no airspeed data, use zeros
+            self.data["airspeed"] = torch.zeros((len(times_imu), 1), dtype=torch.double)
 
     def get_length(self):
         return self.data["time"].shape[0]

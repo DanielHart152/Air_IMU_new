@@ -32,8 +32,9 @@ class CodeNet(ModelBase):
         self.imu_cnn = CNNEncoder(c_list=[6, 32, 64], k_list=[7, 7], s_list=[3, 3])# acc(3) + gyro(3)
         self.rot_cnn = CNNEncoder(c_list=[3, 16, 32], k_list=[7, 7], s_list=[3, 3])# rot_so3(3) - Lie algebra
         self.d_vel_cnn = CNNEncoder(c_list=[1, 8, 16], k_list=[7, 7], s_list=[3, 3])# vel_z(1)
+        self.airspeed_cnn = CNNEncoder(c_list=[1, 8, 16], k_list=[7, 7], s_list=[3, 3])# airspeed(1)
 
-        self.gru1 = nn.GRU(input_size = 112, hidden_size = 128, num_layers = 1, batch_first = True)# 64+32+16=112
+        self.gru1 = nn.GRU(input_size = 128, hidden_size = 128, num_layers = 1, batch_first = True)# 64+32+16+16=128
         self.gru2 = nn.GRU(input_size = 128, hidden_size = 256, num_layers = 1, batch_first = True)
 
         self.accdecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
@@ -42,12 +43,13 @@ class CodeNet(ModelBase):
         self.delta_so3_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
         self.delta_so3_cov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
 
-    def encoder(self, imu, rot, d_vel):
+    def encoder(self, imu, rot, d_vel, airspeed):
         imu_feat = self.imu_cnn(imu.transpose(-1,-2)).transpose(-1,-2)
         rot_feat = self.rot_cnn(rot.transpose(-1,-2)).transpose(-1,-2)
         d_vel_feat = self.d_vel_cnn(d_vel.transpose(-1,-2)).transpose(-1,-2)
+        airspeed_feat = self.airspeed_cnn(airspeed.transpose(-1,-2)).transpose(-1,-2)
         
-        x = torch.cat([imu_feat, rot_feat, d_vel_feat], dim=-1)
+        x = torch.cat([imu_feat, rot_feat, d_vel_feat, airspeed_feat], dim=-1)
         x, _ = self.gru1(x)
         x, _ = self.gru2(x)
 
@@ -92,8 +94,9 @@ class CodeNet(ModelBase):
         imu = torch.cat([data["acc"], data["gyro"]], dim = -1)
         rot = data["rot"].Log().tensor()  # Convert SO3 to so3 Lie algebra (3D)
         d_vel = data["vel"][..., 2:3]
+        airspeed = data.get("airspeed", torch.zeros_like(d_vel))
         
-        feature = self.encoder(imu, rot, d_vel)[:,1:,:]
+        feature = self.encoder(imu, rot, d_vel, airspeed)[:,1:,:]
         correction = self.decoder(feature)
         zero_signal = torch.zeros_like(data['acc'][:,self.interval:,:])
 
